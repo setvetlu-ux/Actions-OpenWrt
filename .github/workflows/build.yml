@@ -1,65 +1,62 @@
-name: Build OpenWrt x86_64 10G
+name: OpenWrt
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+
+env:
+  REPO_URL: https://github.com/openwrt/openwrt
+  REPO_BRANCH: master
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: .config
+  DIY_P1_SH: diy-part1.sh
+  DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN_DIR: true
+  UPLOAD_FIRMWARE: true
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 1800
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    - name: Checkout
+      uses: actions/checkout@main
 
-      - name: Setup packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libncurses5-dev gawk gettext unzip \
-            file wget rsync subversion python3-distutils python3-setuptools
+    - name: Initialization environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git python3 unzip p7zip-full zlib1g-dev gawk wget
 
-      - name: Copy custom config (from repo/config/.config)
-        run: |
-          if [ -f config/.config ]; then
-            cp config/.config ./.config
-            echo "Custom .config copied"
-            echo "---- .config ----"
-            sed -n '1,200p' ./.config || true
-          else
-            echo "No custom .config found"
-          fi
+    - name: Clone openwrt source code
+      run: |
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
 
-      - name: Setup feeds & community packages
-        run: |
-          # Ensure package/community exists
-          mkdir -p package/community
-          # Clone common third-party packages (use shallow clones)
-          git clone --depth 1 https://github.com/xiaorouji/openwrt-passwall-packages.git package/community/passwall-packages || true
-          git clone --depth 1 https://github.com/xiaorouji/openwrt-passwall.git package/community/passwall || true
-          git clone --depth 1 https://github.com/fw876/helloworld.git package/community/helloworld || true
-          git clone --depth 1 https://github.com/rufengsuixing/luci-app-adguardhome.git package/community/adguard || true
-          git clone --depth 1 https://github.com/pymumu/smartdns.git package/community/smartdns || true
+    - name: Copy files
+      run: |
+        cp $FEEDS_CONF openwrt/feeds.conf.default
+        cp $CONFIG_FILE openwrt/.config
+        cp $DIY_P1_SH openwrt/diy-part1.sh
+        cp $DIY_P2_SH openwrt/diy-part2.sh
+        chmod +x openwrt/diy-part1.sh
+        chmod +x openwrt/diy-part2.sh
 
-      - name: Update and install feeds
-        run: |
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+    - name: Load custom feeds
+      run: |
+        cd openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
-      - name: Apply defconfig
-        run: |
-          make defconfig -j$(nproc)
+    - name: Make defconfig
+      run: |
+        cd openwrt
+        make defconfig
 
-      - name: Build (this may take long)
-        run: |
-          make -j$(nproc) V=s || (echo "Build failed, printing last 200 lines of logs"; tail -n 200 logs/* || true; exit 1)
+    - name: Compile the firmware
+      run: |
+        cd openwrt
+        make -j$(nproc) || make -j1 V=s
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-x86_64-artifacts
-          path: bin/targets/x86/64/
+    - name: Upload firmware
+      uses: actions/upload-artifact@main
+      with:
+        name: firmware
+        path: openwrt/bin/targets
